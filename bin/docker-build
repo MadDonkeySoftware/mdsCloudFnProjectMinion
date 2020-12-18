@@ -1,0 +1,2 @@
+# docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock 192.168.5.90:5000/frito/mds-cloud-fnproject-minion:latest docker images
+docker build -t 192.168.5.90:5000/frito/mds-cloud-fnproject-minion:latest .

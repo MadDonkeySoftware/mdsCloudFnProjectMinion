@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+const mds = require('@maddonkeysoftware/mds-cloud-sdk-node');
+
+const src = require('../src');
+const globals = require('../src/globals');
+
+const logger = globals.getLogger();
+
+const main = () => {
+  try {
+    const nsUrl = process.env.MDS_FN_NS_URL;
+    const qsUrl = process.env.MDS_FN_QS_URL;
+    const fsUrl = process.env.MDS_FN_FS_URL;
+
+    logger.debug({ nsUrl, qsUrl, fsUrl }, 'Initializing MDS SDK');
+    mds.initialize({
+      nsUrl,
+      qsUrl,
+      fsUrl,
+      identityUrl: process.env.MDS_IDENTITY_URL,
+      account: process.env.MDS_FN_SYS_ACCOUNT,
+      userId: process.env.MDS_FN_SYS_USER,
+      password: process.env.MDS_FN_SYS_PASSWORD,
+    });
+    const daemon = src.buildDaemon();
+    daemon.start();
+    logger.info('Minion started and awaiting events...');
+  } catch (err) {
+    logger.error({ err }, 'Minion startup encountered an error');
+  }
+};
+
+main();
