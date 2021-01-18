@@ -5,11 +5,19 @@ const nock = require('nock');
 
 const fnProject = require('./fnProject');
 const globals = require('../globals');
+const helpers = require('../helpers');
 
 chai.use(chaiAsPromised);
 
 describe('src/fnProviders/fnProject', () => {
   const fnProjectApi = nock('http://127.0.0.1:8080');
+
+  beforeEach(() => {
+    sinon.stub(helpers, 'getEnvVar')
+      .withArgs('MDS_FN_FNPROJECT_URL')
+      .returns('http://127.0.0.1:8080');
+    sinon.stub(globals, 'delay').resolves();
+  });
 
   afterEach(() => {
     sinon.restore();
@@ -53,8 +61,9 @@ describe('src/fnProviders/fnProject', () => {
     it('when fails returns undefined', () => {
       // Arrange
       const name = 'testApp';
-      fnProjectApi.post('/v2/apps', { name })
-        .reply(500);
+      fnProjectApi.post('/v2/apps', { name }).reply(500);
+      fnProjectApi.post('/v2/apps', { name }).reply(500);
+      fnProjectApi.post('/v2/apps', { name }).reply(500);
 
       // Act
       return chai.expect(fnProject.createApp(name)).to.be.fulfilled.and.then((id) => {
@@ -117,7 +126,6 @@ describe('src/fnProviders/fnProject', () => {
         fnProjectApi.get('/v2/apps?cursor=a').reply(500);
         fnProjectApi.get('/v2/apps?cursor=a')
           .reply(200, { items: [{ id: 12345, name }] });
-        sinon.stub(globals, 'delay').resolves();
 
         // Act
         return chai.expect(fnProject.findAppIdByName(name)).to.be.fulfilled.and.then((id) => {
@@ -135,7 +143,6 @@ describe('src/fnProviders/fnProject', () => {
         fnProjectApi.get('/v2/apps?cursor=a').reply(500);
         fnProjectApi.get('/v2/apps?cursor=a').reply(500);
         fnProjectApi.get('/v2/apps?cursor=a').reply(500);
-        sinon.stub(globals, 'delay').resolves();
 
         // Act
         return chai.expect(fnProject.findAppIdByName(name)).to.be.rejected.and.then((err) => {
@@ -170,6 +177,10 @@ describe('src/fnProviders/fnProject', () => {
       const image = 'testImage';
       fnProjectApi.post('/v2/fns', { name, app_id: appId, image })
         .reply(500);
+      fnProjectApi.post('/v2/fns', { name, app_id: appId, image })
+        .reply(500);
+      fnProjectApi.post('/v2/fns', { name, app_id: appId, image })
+        .reply(500);
 
       // Act
       return chai.expect(fnProject.createFunction(name, appId, image)).to.be.fulfilled.and
@@ -202,6 +213,10 @@ describe('src/fnProviders/fnProject', () => {
       const funcId = 'testFunc';
       const appId = 'testAppId';
       const image = 'testImage';
+      fnProjectApi.put(`/v2/fns/${funcId}`, { image })
+        .reply(500);
+      fnProjectApi.put(`/v2/fns/${funcId}`, { image })
+        .reply(500);
       fnProjectApi.put(`/v2/fns/${funcId}`, { image })
         .reply(500);
 

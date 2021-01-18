@@ -5,6 +5,7 @@ const axios = require('axios');
 const buildUrl = require('build-url');
 
 const globals = require('../globals');
+const helpers = require('../helpers');
 
 const NAME = 'fnProject';
 
@@ -18,8 +19,11 @@ const getFnProjectUrl = (env) => _.get(env, ['MDS_FN_FNPROJECT_URL'], 'http://12
  * @param {string} data.path
  * @param {object} [data.body]
  * @param {string} data.httpVerb
+ * @param {object} [retryMeta]
+ * @param {number} [retryMeta.attempt]
+ * @param {number} [retryMeta.maxAttempt]
  */
-const makeRequest = async (data) => {
+const makeRequest = async (data, retryMeta = {}) => {
   const requestOptions = {
     headers: {
       Accept: 'application/json',
@@ -28,25 +32,54 @@ const makeRequest = async (data) => {
     validateStatus: () => true,
   };
 
-  const url = buildUrl(getFnProjectUrl(process.env), data);
+  const url = buildUrl(
+    helpers.getEnvVar('MDS_FN_FNPROJECT_URL', 'http://127.0.0.1:8080'),
+    data,
+  );
 
-  switch (data.httpVerb.toUpperCase()) {
-    case 'GET':
-      return axios.get(url, requestOptions);
-    case 'POST':
-      return axios.post(url, data.body, requestOptions);
-    case 'PUT':
-      return axios.put(url, data.body, requestOptions);
-    default:
-      throw new Error(`HTTP verb "${data.httpVerb}" not understood.`);
+  let resp;
+  let throwUnknownVerb = false;
+  try {
+    switch (data.httpVerb.toUpperCase()) {
+      case 'GET':
+        resp = await axios.get(url, requestOptions);
+        break;
+      case 'POST':
+        resp = await axios.post(url, data.body, requestOptions);
+        break;
+      case 'PUT':
+        resp = await axios.put(url, data.body, requestOptions);
+        break;
+      /* istanbul ignore next */
+      default:
+        throwUnknownVerb = true;
+    }
+  } catch (err) {
+    const doNotBlock = ['ERR_NOCK_NO_MATCH'];
+    if (doNotBlock.indexOf(err.code) > -1) throw err;
+
+    logger.warn({ err }, 'Error occurred when making request to fnProject server.');
   }
+
+  /* istanbul ignore if */
+  if (throwUnknownVerb) {
+    throw new Error(`HTTP verb "${data.httpVerb}" not understood.`);
+  }
+
+  const attempt = _.get(retryMeta, ['attempt'], 1);
+  const maxAttempt = _.get(retryMeta, ['maxAttempt'], 3);
+  if ((resp === undefined || resp.status > 499) && attempt < maxAttempt) {
+    logger.warn({ status: resp.status, response: resp.data }, 'Failed to get response. Retrying...');
+    return globals.delay(500 * attempt)
+      .then(() => makeRequest(data, { attempt: attempt + 1, maxAttempt }));
+  }
+
+  return resp;
 };
 
 const getAppsPagedData = async ({
   runningData,
   dataKey,
-  delay = 500,
-  tries = 1,
 }) => {
   const reqData = { path: '/v2/apps', httpVerb: 'get' };
   if (dataKey) {
@@ -62,20 +95,9 @@ const getAppsPagedData = async ({
       return getAppsPagedData({
         runningData: newRunningData,
         dataKey: resp.data.next_cursor,
-        delay,
-        tries: 1,
       });
     }
     return newRunningData;
-  }
-  logger.warn({ status: resp.status, response: resp.data }, 'Failed to get application list in fnProject.');
-  if (tries <= 3) {
-    return globals.delay(delay).then(() => getAppsPagedData({
-      runningData,
-      dataKey,
-      delay: delay * tries,
-      tries: tries + 1,
-    }));
   }
 
   logger.error({ status: resp.status, response: resp.data }, 'Failed to get application list in fnProject and retries exhausted.');
