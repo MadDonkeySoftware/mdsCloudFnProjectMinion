@@ -8,6 +8,7 @@ const mds = require('@maddonkeysoftware/mds-cloud-sdk-node');
 const fs = require('fs');
 const shelljs = require('shelljs');
 const unzipper = require('unzipper');
+const dns = require('dns');
 
 const globals = require('./globals');
 const logic = require('./logic');
@@ -450,7 +451,6 @@ describe('src/logic', () => {
     });
   });
 
-  // TODO: resume testing here.
   describe('buildFunction', () => {
     const eventData = {
       functionId: 'testFuncId',
@@ -580,6 +580,51 @@ describe('src/logic', () => {
         .then(() => {
           chai.expect(fakeLogger.warn.callCount).to.equal(1);
         });
+    });
+  });
+
+  describe('getContainerHost', () => {
+    beforeEach(() => {
+      logic.clearContainerHost();
+    });
+
+    it('resolves with port 80 when no port specified', () => {
+      // Arrange
+      const getEnvVarStub = sinon.stub(helpers, 'getEnvVar');
+      getEnvVarStub.withArgs('MDS_FN_CONTAINER_HOST').returns('1.2.3.4');
+
+      // Act
+      return logic.getContainerHost().then((result1) => {
+        // Assert
+        chai.expect(result1).to.equal('1.2.3.4:80/');
+      });
+    });
+
+    it('resolves cached container host when called multiple times', () => {
+      // Arrange
+      const getEnvVarStub = sinon.stub(helpers, 'getEnvVar');
+      getEnvVarStub.withArgs('MDS_FN_CONTAINER_HOST').returns('1.2.3.4:5678');
+
+      // Act
+      return logic.getContainerHost().then((result1) => logic.getContainerHost().then((result2) => {
+        // Assert
+        chai.expect(result1).to.equal('1.2.3.4:5678/');
+        chai.expect(result2).to.equal('1.2.3.4:5678/');
+        chai.expect(getEnvVarStub.callCount).to.equal(1);
+      }));
+    });
+
+    it('resolves ip address of host name when dns name used in place of IP address', () => {
+      // Arrange
+      const getEnvVarStub = sinon.stub(helpers, 'getEnvVar');
+      getEnvVarStub.withArgs('MDS_FN_CONTAINER_HOST').returns('someHost:5678');
+      sinon.stub(dns, 'lookup').callsFake((hn, cb) => cb(undefined, { address: '1.2.3.4' }));
+
+      // Act
+      return logic.getContainerHost().then((result1) => {
+        // Assert
+        chai.expect(result1).to.equal('1.2.3.4:5678/');
+      });
     });
   });
 });

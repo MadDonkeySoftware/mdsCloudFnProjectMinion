@@ -1,11 +1,13 @@
 const _ = require('lodash');
 const mds = require('@maddonkeysoftware/mds-cloud-sdk-node');
+const dns = require('dns');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const unzipper = require('unzipper');
 const shelljs = require('shelljs');
 const url = require('url');
+const util = require('util');
 
 const repo = require('./repo');
 const globals = require('./globals');
@@ -124,33 +126,77 @@ const prepSourceForContainerBuild = async (localPath, funcMetadata) => new Promi
   });
 });
 
-const buildContainer = (localPath, funcMetadata) => new Promise((resolve, reject) => {
-  const containerHost = helpers.getEnvVar('MDS_FN_CONTAINER_HOST')
-    ? `${helpers.getEnvVar('MDS_FN_CONTAINER_HOST')}/`
-    : '';
-  const tagPrefix = `${containerHost}mds-sf-${funcMetadata.accountId}/${funcMetadata.name}`.toLowerCase();
-  const tagVersion = funcMetadata.version;
-  const cmd = `docker build -t ${tagPrefix}:${tagVersion} -f MdsDockerfile .`;
-  shelljs.exec(cmd, { cwd: localPath, silent: true }, (retCode, sdtOut, stdErr) => {
-    if (retCode === 0) {
-      resolve({
-        tagPrefix,
-        tagVersion,
-        name: funcMetadata.name,
-      });
-    } else {
+// https://www.regextester.com/22
+const isValidIpAddress = (ipAddress) => /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/.test(ipAddress);
+
+let resolvedContainerHost;
+
+const clearContainerHost = () => {
+  resolvedContainerHost = undefined;
+};
+
+const getContainerHost = async () => {
+  if (resolvedContainerHost) return resolvedContainerHost;
+
+  const containerHostEnv = helpers.getEnvVar('MDS_FN_CONTAINER_HOST');
+  if (containerHostEnv) {
+    const [host, port] = containerHostEnv.indexOf(':') > -1
+      ? containerHostEnv.split(':')
+      : [containerHostEnv, '80'];
+
+    try {
+      if (isValidIpAddress(host)) {
+        resolvedContainerHost = `${host}:${port}/`;
+        return resolvedContainerHost;
+      }
+      const lookup = util.promisify(dns.lookup);
+      const discoveredIp = await lookup(host);
+      resolvedContainerHost = `${discoveredIp.address}:${port}/`;
+      return resolvedContainerHost;
+    } catch (err) {
       const logger = globals.getLogger();
-      logger.error({ retCode, sdtOut, stdErr }, 'Failed to build docker image');
-      shelljs.exec(`cat ${localPath}/package.json`, {}, (retCode2, stdOut2, stdErr2) => {
-        logger.debug({ retCode: retCode2, stdOut: stdOut2, stdErr: stdErr2 }, 'Work directory output');
-      });
-      reject(new Error('Failed to build docker image.'));
+      logger.warn({ err }, 'Failed to find DNS resolution of container host.');
+      resolvedContainerHost = `${containerHostEnv}/`;
+      return resolvedContainerHost;
     }
+  }
+  return '';
+};
+
+const buildContainer = (localPath, funcMetadata) => new Promise((resolve, reject) => {
+  getContainerHost().then((containerHost) => {
+    const tagPrefix = `${containerHost}mds-sf-${funcMetadata.accountId}/${funcMetadata.name}`.toLowerCase();
+    const tagVersion = funcMetadata.version;
+    const cmd = `docker build -t ${tagPrefix}:${tagVersion} -f MdsDockerfile .`;
+    shelljs.exec(cmd, { cwd: localPath, silent: true }, (retCode, sdtOut, stdErr) => {
+      if (retCode === 0) {
+        resolve({
+          tagPrefix,
+          tagVersion,
+          name: funcMetadata.name,
+        });
+      } else {
+        const logger = globals.getLogger();
+        logger.error({ retCode, sdtOut, stdErr }, 'Failed to build docker image');
+        shelljs.exec(`cat ${localPath}/package.json`, {}, (retCode2, stdOut2, stdErr2) => {
+          logger.debug({ retCode: retCode2, stdOut: stdOut2, stdErr: stdErr2 }, 'Work directory output');
+        });
+        reject(new Error('Failed to build docker image.'));
+      }
+    });
   });
 });
 
-const pushContainerToRegistry = (metadata) => new Promise((resolve) => {
-  shelljs.exec(`docker push ${metadata.tagPrefix}`, { silent: true }, () => resolve());
+const pushContainerToRegistry = (metadata) => new Promise((resolve, reject) => {
+  helpers.shellExecute(`docker push ${metadata.tagPrefix}`, { silent: true }).then(({ retCode, stdOut, stdErr }) => {
+    if (retCode === 0) {
+      resolve();
+    } else {
+      const logger = globals.getLogger();
+      logger.error({ retCode, stdOut, stdErr }, 'Failed to push docker image');
+      reject(new Error('Failed to push docker image.'));
+    }
+  });
 });
 
 const removeContainerLocally = (metadata) => new Promise((resolve) => {
@@ -216,7 +262,14 @@ const buildFunction = async (eventData) => {
       const cleanedPath = invokePath.indexOf('/') !== 0 ? invokePath : invokePath.slice(1);
       const invokeUrl = `${host}/${cleanedPath}`;
       const funcId = _.get(providerMeta, ['id']);
-      await funcCol.updateOne({ id: metadata.id }, { $set: { invokeUrl, funcId } });
+      const mongoOptions = {
+        writeConcern: {
+          w: 'majority',
+          j: true,
+          wtimeout: 30000, // milliseconds
+        },
+      };
+      await funcCol.updateOne({ id: metadata.id }, { $set: { invokeUrl, funcId } }, mongoOptions);
     } else {
       await module.exports.updateFuncInProvider(metadata, containerMeta);
       logger.debug({ metadata, containerMeta }, 'TODO: Provider entity updated.');
@@ -243,5 +296,7 @@ module.exports = {
   removeContainerLocally,
   createFuncInProvider,
   updateFuncInProvider,
+  clearContainerHost,
+  getContainerHost,
   buildFunction,
 };
