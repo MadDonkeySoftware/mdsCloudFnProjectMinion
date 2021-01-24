@@ -188,7 +188,7 @@ const buildContainer = (localPath, funcMetadata) => new Promise((resolve, reject
 });
 
 const pushContainerToRegistry = (metadata) => new Promise((resolve, reject) => {
-  helpers.shellExecute(`docker push ${metadata.tagPrefix}`, { silent: true }).then(({ retCode, stdOut, stdErr }) => {
+  helpers.shellExecute(`docker push ${metadata.tagPrefix}:${metadata.tagVersion}`, { silent: true }).then(({ retCode, stdOut, stdErr }) => {
     if (retCode === 0) {
       resolve();
     } else {
