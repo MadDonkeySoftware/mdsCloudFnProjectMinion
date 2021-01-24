@@ -365,12 +365,13 @@ describe('src/logic', () => {
   describe('pushContainerToRegistry', () => {
     const metadata = {
       tagPrefix: 'testTagPrefix',
+      tagVersion: 1,
     };
 
     it('resolves after command executes', () => {
       // Arrange
       sinon.stub(shelljs, 'exec').callsFake((cmd, opts, cb) => {
-        if (cmd === 'docker push testTagPrefix') globals.delay(1).then(() => cb(0, '', ''));
+        if (cmd === 'docker push testTagPrefix:1') globals.delay(1).then(() => cb(0, '', ''));
       });
 
       // Act
